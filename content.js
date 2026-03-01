@@ -1,12 +1,23 @@
 (() => {
   const isMac = navigator.platform.toLowerCase().includes("mac");
   const UNFOLLOW_MENU_PATTERNS = [/\bunfollow\b/i, /フォロー.*解除/];
+  const CONFIRM_WINDOW_MS = 3000;
+  const STORAGE_KEY_ENABLED = "enabled";
+
+  let extensionEnabled = true;
+  let isProcessing = false;
+  let pendingConfirm = null;
+  let toastRoot = null;
 
   function hasHotkey(event) {
     return isMac ? event.metaKey : event.ctrlKey;
   }
 
   function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
@@ -50,46 +61,180 @@
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   }
 
-  async function blockFromPost(postEl) {
-    const menuButton = findOpenMenuButton(postEl);
-    if (!menuButton) {
-      console.warn("[x-hotkey-blocker] menu button not found");
+  function getPostKey(postEl) {
+    const statusLink = postEl.querySelector('a[href*="/status/"]');
+    if (!statusLink) return null;
+
+    const href = statusLink.getAttribute("href") || "";
+    const match = href.match(/\/status\/(\d+)/);
+    if (match) return match[1];
+    return href;
+  }
+
+  function ensureToastRoot() {
+    if (toastRoot && document.body.contains(toastRoot)) return toastRoot;
+
+    toastRoot = document.createElement("div");
+    toastRoot.id = "xhb-toast-root";
+    Object.assign(toastRoot.style, {
+      position: "fixed",
+      right: "16px",
+      bottom: "16px",
+      zIndex: "999999",
+      display: "flex",
+      flexDirection: "column",
+      gap: "8px",
+      pointerEvents: "none"
+    });
+    document.body.appendChild(toastRoot);
+    return toastRoot;
+  }
+
+  function showToast(message, variant = "info") {
+    const root = ensureToastRoot();
+    const toast = document.createElement("div");
+
+    const bgMap = {
+      info: "#1f2937",
+      success: "#14532d",
+      warning: "#78350f",
+      error: "#7f1d1d"
+    };
+
+    Object.assign(toast.style, {
+      color: "#ffffff",
+      background: bgMap[variant] || bgMap.info,
+      border: "1px solid rgba(255,255,255,0.25)",
+      borderRadius: "8px",
+      boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
+      padding: "10px 12px",
+      fontSize: "13px",
+      maxWidth: "360px",
+      pointerEvents: "none",
+      opacity: "0",
+      transform: "translateY(8px)",
+      transition: "opacity 140ms ease, transform 140ms ease"
+    });
+
+    toast.textContent = message;
+    root.appendChild(toast);
+
+    requestAnimationFrame(() => {
+      toast.style.opacity = "1";
+      toast.style.transform = "translateY(0)";
+    });
+
+    void (async () => {
+      await wait(2200);
+      toast.style.opacity = "0";
+      toast.style.transform = "translateY(8px)";
+      await wait(180);
+      if (toast.parentElement) toast.parentElement.removeChild(toast);
+    })();
+  }
+
+  function resetPendingConfirm() {
+    pendingConfirm = null;
+  }
+
+  function needsSecondClick(postEl) {
+    const now = Date.now();
+    const postKey = getPostKey(postEl);
+
+    if (!pendingConfirm || now > pendingConfirm.expiresAt) {
+      pendingConfirm = {
+        key: postKey,
+        postEl,
+        expiresAt: now + CONFIRM_WINDOW_MS
+      };
+      return true;
+    }
+
+    const isSameByKey = postKey && pendingConfirm.key && postKey === pendingConfirm.key;
+    const isSameByRef = !postKey && pendingConfirm.key === null && pendingConfirm.postEl === postEl;
+    if (isSameByKey || isSameByRef) {
+      resetPendingConfirm();
+      return false;
+    }
+
+    pendingConfirm = {
+      key: postKey,
+      postEl,
+      expiresAt: now + CONFIRM_WINDOW_MS
+    };
+    return true;
+  }
+
+  async function loadEnabledState() {
+    if (!chrome?.storage?.local) return;
+
+    const data = await chrome.storage.local.get(STORAGE_KEY_ENABLED);
+    if (typeof data[STORAGE_KEY_ENABLED] === "boolean") {
+      extensionEnabled = data[STORAGE_KEY_ENABLED];
       return;
     }
+
+    extensionEnabled = true;
+    await chrome.storage.local.set({ [STORAGE_KEY_ENABLED]: true });
+  }
+
+  function watchEnabledState() {
+    if (!chrome?.storage?.onChanged) return;
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local") return;
+      if (!changes[STORAGE_KEY_ENABLED]) return;
+      extensionEnabled = Boolean(changes[STORAGE_KEY_ENABLED].newValue);
+      showToast(extensionEnabled ? "X Hotkey Blocker: ON" : "X Hotkey Blocker: OFF", "info");
+    });
+  }
+
+  async function blockFromPost(postEl) {
+    const menuButton = findOpenMenuButton(postEl);
+    if (!menuButton) return { status: "menu-button-missing" };
 
     menuButton.click();
 
     const firstMenuItem = await waitForElement('[role="menuitem"]');
-    if (!firstMenuItem) {
-      console.warn("[x-hotkey-blocker] menu did not open");
-      return;
-    }
+    if (!firstMenuItem) return { status: "menu-not-open" };
 
     const menuItems = getMenuItems();
     if (isFollowingByMenuItems(menuItems)) {
-      console.info("[x-hotkey-blocker] skipped: following user (detected by menu)");
       closeMenu();
-      return;
+      return { status: "skipped-following" };
     }
 
     const targetBlockItem = findBlockMenuItem(menuItems);
     if (!targetBlockItem) {
-      console.warn("[x-hotkey-blocker] block menu item not found");
       closeMenu();
-      return;
+      return { status: "block-item-missing" };
     }
 
     targetBlockItem.click();
 
     const confirmButton = await waitForElement('[data-testid="confirmationSheetConfirm"]');
-    if (!confirmButton) {
-      console.warn("[x-hotkey-blocker] block confirmation button not found");
+    if (!confirmButton) return { status: "confirm-button-missing" };
+
+    confirmButton.click();
+    return { status: "blocked" };
+  }
+
+  function notifyResult(status) {
+    if (status === "blocked") {
+      showToast("ブロックを実行しました", "success");
       return;
     }
 
-    confirmButton.click();
-    console.info("[x-hotkey-blocker] block attempted");
+    if (status === "skipped-following") {
+      showToast("フォロー中ユーザーのためスキップしました", "warning");
+      return;
+    }
+
+    showToast("ブロック処理に失敗しました（UI変更の可能性）", "error");
   }
+
+  void loadEnabledState();
+  watchEnabledState();
 
   document.addEventListener(
     "click",
@@ -99,10 +244,33 @@
       const postEl = findPostElement(event.target);
       if (!postEl) return;
 
+      if (!extensionEnabled) return;
+
       event.preventDefault();
       event.stopPropagation();
 
-      void blockFromPost(postEl);
+      if (isProcessing) {
+        showToast("処理中です。少し待ってください", "info");
+        return;
+      }
+
+      if (needsSecondClick(postEl)) {
+        showToast("3秒以内に同じポストをもう一度クリックで実行", "warning");
+        return;
+      }
+
+      isProcessing = true;
+      void blockFromPost(postEl)
+        .then((result) => {
+          notifyResult(result.status);
+        })
+        .catch(() => {
+          showToast("想定外エラーが発生しました", "error");
+        })
+        .finally(() => {
+          isProcessing = false;
+          resetPendingConfirm();
+        });
     },
     true
   );
