@@ -3,8 +3,10 @@
   const UNFOLLOW_MENU_PATTERNS = [/\bunfollow\b/i, /フォロー.*解除/];
   const CONFIRM_WINDOW_MS = 3000;
   const STORAGE_KEY_ENABLED = "enabled";
+  const STORAGE_KEY_REQUIRE_CONFIRM = "requireConfirm";
 
   let extensionEnabled = true;
+  let requireConfirm = true;
   let isProcessing = false;
   let pendingConfirm = null;
   let toastRoot = null;
@@ -165,27 +167,42 @@
     return true;
   }
 
-  async function loadEnabledState() {
+  async function loadSettings() {
     if (!chrome?.storage?.local) return;
 
-    const data = await chrome.storage.local.get(STORAGE_KEY_ENABLED);
+    const data = await chrome.storage.local.get([STORAGE_KEY_ENABLED, STORAGE_KEY_REQUIRE_CONFIRM]);
+
     if (typeof data[STORAGE_KEY_ENABLED] === "boolean") {
       extensionEnabled = data[STORAGE_KEY_ENABLED];
-      return;
+    } else {
+      extensionEnabled = true;
+      await chrome.storage.local.set({ [STORAGE_KEY_ENABLED]: true });
     }
 
-    extensionEnabled = true;
-    await chrome.storage.local.set({ [STORAGE_KEY_ENABLED]: true });
+    if (typeof data[STORAGE_KEY_REQUIRE_CONFIRM] === "boolean") {
+      requireConfirm = data[STORAGE_KEY_REQUIRE_CONFIRM];
+    } else {
+      requireConfirm = true;
+      await chrome.storage.local.set({ [STORAGE_KEY_REQUIRE_CONFIRM]: true });
+    }
   }
 
-  function watchEnabledState() {
+  function watchSettings() {
     if (!chrome?.storage?.onChanged) return;
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "local") return;
-      if (!changes[STORAGE_KEY_ENABLED]) return;
-      extensionEnabled = Boolean(changes[STORAGE_KEY_ENABLED].newValue);
-      showToast(extensionEnabled ? "X Hotkey Blocker: ON" : "X Hotkey Blocker: OFF", "info");
+
+      if (changes[STORAGE_KEY_ENABLED]) {
+        extensionEnabled = Boolean(changes[STORAGE_KEY_ENABLED].newValue);
+        showToast(extensionEnabled ? "X Hotkey Blocker: ON" : "X Hotkey Blocker: OFF", "info");
+      }
+
+      if (changes[STORAGE_KEY_REQUIRE_CONFIRM]) {
+        requireConfirm = Boolean(changes[STORAGE_KEY_REQUIRE_CONFIRM].newValue);
+        resetPendingConfirm();
+        showToast(requireConfirm ? "二段階確認: ON" : "二段階確認: OFF", "info");
+      }
     });
   }
 
@@ -233,8 +250,8 @@
     showToast("ブロック処理に失敗しました（UI変更の可能性）", "error");
   }
 
-  void loadEnabledState();
-  watchEnabledState();
+  void loadSettings();
+  watchSettings();
 
   document.addEventListener(
     "click",
@@ -254,7 +271,7 @@
         return;
       }
 
-      if (needsSecondClick(postEl)) {
+      if (requireConfirm && needsSecondClick(postEl)) {
         showToast("3秒以内に同じポストをもう一度クリックで実行", "warning");
         return;
       }
