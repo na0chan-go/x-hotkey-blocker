@@ -4,6 +4,8 @@
   const CONFIRM_WINDOW_MS = 3000;
   const STORAGE_KEY_ENABLED = "enabled";
   const STORAGE_KEY_REQUIRE_CONFIRM = "requireConfirm";
+  const STORAGE_KEY_HISTORY = "executionHistory";
+  const MAX_HISTORY_ITEMS = 30;
 
   let extensionEnabled = true;
   let requireConfirm = true;
@@ -63,14 +65,27 @@
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   }
 
-  function getPostKey(postEl) {
+  function getStatusHref(postEl) {
     const statusLink = postEl.querySelector('a[href*="/status/"]');
-    if (!statusLink) return null;
+    return statusLink ? statusLink.getAttribute("href") || "" : "";
+  }
 
-    const href = statusLink.getAttribute("href") || "";
+  function getPostKey(postEl) {
+    const href = getStatusHref(postEl);
+    if (!href) return null;
+
     const match = href.match(/\/status\/(\d+)/);
     if (match) return match[1];
     return href;
+  }
+
+  function getScreenName(postEl) {
+    const href = getStatusHref(postEl);
+    if (!href) return "unknown";
+
+    const match = href.match(/^\/([^/]+)\/status\//);
+    if (!match) return "unknown";
+    return `@${match[1]}`;
   }
 
   function ensureToastRoot() {
@@ -236,6 +251,13 @@
     return { status: "blocked" };
   }
 
+  function getStatusSummary(status) {
+    if (status === "blocked") return { label: "実行成功", variant: "success" };
+    if (status === "skipped-following") return { label: "フォロー中でスキップ", variant: "warning" };
+    if (status === "unexpected-error") return { label: "想定外エラー", variant: "error" };
+    return { label: "実行失敗", variant: "error" };
+  }
+
   function notifyResult(status) {
     if (status === "blocked") {
       showToast("ブロックを実行しました", "success");
@@ -248,6 +270,24 @@
     }
 
     showToast("ブロック処理に失敗しました（UI変更の可能性）", "error");
+  }
+
+  async function appendExecutionHistory(status, postEl) {
+    if (!chrome?.storage?.local) return;
+
+    const summary = getStatusSummary(status);
+    const entry = {
+      timestamp: Date.now(),
+      status,
+      label: summary.label,
+      screenName: getScreenName(postEl),
+      postKey: getPostKey(postEl)
+    };
+
+    const data = await chrome.storage.local.get(STORAGE_KEY_HISTORY);
+    const current = Array.isArray(data[STORAGE_KEY_HISTORY]) ? data[STORAGE_KEY_HISTORY] : [];
+    const next = [entry, ...current].slice(0, MAX_HISTORY_ITEMS);
+    await chrome.storage.local.set({ [STORAGE_KEY_HISTORY]: next });
   }
 
   void loadSettings();
@@ -280,9 +320,11 @@
       void blockFromPost(postEl)
         .then((result) => {
           notifyResult(result.status);
+          void appendExecutionHistory(result.status, postEl);
         })
         .catch(() => {
           showToast("想定外エラーが発生しました", "error");
+          void appendExecutionHistory("unexpected-error", postEl);
         })
         .finally(() => {
           isProcessing = false;
