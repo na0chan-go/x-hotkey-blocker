@@ -1,6 +1,6 @@
 (() => {
   const isMac = navigator.platform.toLowerCase().includes("mac");
-  const FOLLOWING_LABEL_PATTERNS = [/\bfollowing\b/i, /フォロー中/];
+  const UNFOLLOW_MENU_PATTERNS = [/\bunfollow\b/i, /フォロー.*解除/];
 
   function hasHotkey(event) {
     return isMac ? event.metaKey : event.ctrlKey;
@@ -28,20 +28,26 @@
     return postEl.querySelector('[data-testid="caret"]') || postEl.querySelector('button[aria-label="More"]');
   }
 
-  function isFollowingPost(postEl) {
-    const userNameEl = postEl.querySelector('[data-testid="User-Name"]');
-    if (!userNameEl) return false;
-
-    const text = (userNameEl.textContent || "").replace(/\s+/g, " ").trim();
-    return FOLLOWING_LABEL_PATTERNS.some((pattern) => pattern.test(text));
+  function getMenuItems() {
+    return Array.from(document.querySelectorAll('[role="menuitem"]'));
   }
 
-  function findBlockMenuItem() {
-    const candidates = Array.from(document.querySelectorAll('[role="menuitem"]'));
+  function isFollowingByMenuItems(items) {
+    return items.some((item) => {
+      const text = (item.textContent || "").replace(/\s+/g, " ").trim();
+      return UNFOLLOW_MENU_PATTERNS.some((pattern) => pattern.test(text));
+    });
+  }
+
+  function findBlockMenuItem(items) {
     return (
-      candidates.find((item) => /block\s*@/i.test(item.textContent || "")) ||
-      candidates.find((item) => /(ブロック|block)/i.test(item.textContent || ""))
+      items.find((item) => /block\s*@/i.test(item.textContent || "")) ||
+      items.find((item) => /(ブロック|block)/i.test(item.textContent || ""))
     );
+  }
+
+  function closeMenu() {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   }
 
   async function blockFromPost(postEl) {
@@ -53,15 +59,23 @@
 
     menuButton.click();
 
-    const blockItem = await waitForElement('[role="menuitem"]');
-    if (!blockItem) {
+    const firstMenuItem = await waitForElement('[role="menuitem"]');
+    if (!firstMenuItem) {
       console.warn("[x-hotkey-blocker] menu did not open");
       return;
     }
 
-    const targetBlockItem = findBlockMenuItem();
+    const menuItems = getMenuItems();
+    if (isFollowingByMenuItems(menuItems)) {
+      console.info("[x-hotkey-blocker] skipped: following user (detected by menu)");
+      closeMenu();
+      return;
+    }
+
+    const targetBlockItem = findBlockMenuItem(menuItems);
     if (!targetBlockItem) {
       console.warn("[x-hotkey-blocker] block menu item not found");
+      closeMenu();
       return;
     }
 
@@ -84,10 +98,6 @@
 
       const postEl = findPostElement(event.target);
       if (!postEl) return;
-      if (isFollowingPost(postEl)) {
-        console.info("[x-hotkey-blocker] skipped: following user");
-        return;
-      }
 
       event.preventDefault();
       event.stopPropagation();
