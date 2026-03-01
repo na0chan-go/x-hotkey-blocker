@@ -1,0 +1,27 @@
+{
+  "name": "x-hotkey-blocker",
+  "version": "1.0.0",
+  "description": "Chrome系ブラウザ向けの拡張機能です。X (x.com / twitter.com) 上で以下ショートカットを押しながらポストを左クリックすると、投稿者のブロックを試行します。",
+  "main": "content.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "test:e2e": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/na0chan-go/x-hotkey-blocker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/na0chan-go/x-hotkey-blocker/issues"
+  },
+  "homepage": "https://github.com/na0chan-go/x-hotkey-blocker#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
+  }
+}
