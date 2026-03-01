@@ -1,5 +1,6 @@
 (() => {
   const isMac = navigator.platform.toLowerCase().includes("mac");
+  const FOLLOWING_LABEL_PATTERNS = [/\bfollowing\b/i, /フォロー中/];
 
   function hasHotkey(event) {
     return isMac ? event.metaKey : event.ctrlKey;
@@ -25,6 +26,14 @@
 
   function findOpenMenuButton(postEl) {
     return postEl.querySelector('[data-testid="caret"]') || postEl.querySelector('button[aria-label="More"]');
+  }
+
+  function isFollowingPost(postEl) {
+    const userNameEl = postEl.querySelector('[data-testid="User-Name"]');
+    if (!userNameEl) return false;
+
+    const text = (userNameEl.textContent || "").replace(/\s+/g, " ").trim();
+    return FOLLOWING_LABEL_PATTERNS.some((pattern) => pattern.test(text));
   }
 
   function findBlockMenuItem() {
@@ -75,6 +84,10 @@
 
       const postEl = findPostElement(event.target);
       if (!postEl) return;
+      if (isFollowingPost(postEl)) {
+        console.info("[x-hotkey-blocker] skipped: following user");
+        return;
+      }
 
       event.preventDefault();
       event.stopPropagation();
