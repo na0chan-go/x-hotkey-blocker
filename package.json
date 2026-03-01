@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "pack:extension": "bash scripts/pack-extension.sh"
   },
   "repository": {
     "type": "git",
