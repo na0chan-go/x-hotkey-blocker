@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "X Hotkey Blocker",
   "description": "Cmd/Ctrl + click a post on X to block its author.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "permissions": [
     "storage"
   ],
