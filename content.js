@@ -105,8 +105,24 @@
     );
   }
 
-  function closeMenu() {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  async function closeMenu() {
+    for (let i = 0; i < 3; i += 1) {
+      const hasMenu = getMenuItems().length > 0;
+      if (!hasMenu) return;
+
+      const escOptions = { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true };
+      document.dispatchEvent(new KeyboardEvent("keydown", escOptions));
+      document.dispatchEvent(new KeyboardEvent("keyup", escOptions));
+      if (document.activeElement) {
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", escOptions));
+      }
+
+      await sleep(80);
+    }
+
+    if (getMenuItems().length > 0 && document.body) {
+      document.body.click();
+    }
   }
 
   function getStatusHref(postEl) {
@@ -310,13 +326,13 @@
 
     const menuItems = getMenuItems();
     if (isFollowingByMenuItems(menuItems)) {
-      closeMenu();
+      await closeMenu();
       return { status: "skipped-following" };
     }
 
     const targetBlockItem = findBlockMenuItem(menuItems);
     if (!targetBlockItem) {
-      closeMenu();
+      await closeMenu();
       return { status: "block-item-missing" };
     }
 
