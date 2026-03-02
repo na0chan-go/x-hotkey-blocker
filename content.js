@@ -259,7 +259,33 @@
     return true;
   }
 
-  function ensureInlineButtonStyles() {}
+  function ensureInlineButtonStyles() {
+    if (document.getElementById(INLINE_BUTTON_STYLE_ID)) return;
+
+    const style = document.createElement("style");
+    style.id = INLINE_BUTTON_STYLE_ID;
+    style.textContent = `
+      button[${INLINE_BUTTON_ATTR}="1"] {
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(0, 0, 0, 0.45);
+        color: #fff;
+        border-radius: 999px;
+        width: 26px;
+        height: 26px;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      button[${INLINE_BUTTON_ATTR}="1"]:hover {
+        background: rgba(220, 38, 38, 0.85);
+      }
+      button[${INLINE_BUTTON_ATTR}="1"]:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    `;
+    document.head.appendChild(style);
+  }
 
   function findActionBar(postEl) {
     const groups = Array.from(postEl.querySelectorAll('div[role="group"]'));
@@ -285,71 +311,6 @@
     );
   }
 
-  function getActionItems(actionBar) {
-    return Array.from(actionBar.children).filter((child) =>
-      child.querySelector(`button:not([${INLINE_BUTTON_ATTR}="1"]), [role="button"]:not([${INLINE_BUTTON_ATTR}="1"])`)
-    );
-  }
-
-  function findTemplateActionItem(actionBar) {
-    const grokNode = findGrokAnchorNode(actionBar);
-    if (grokNode) {
-      const grokItem = getDirectChild(actionBar, grokNode);
-      if (grokItem) return { template: grokItem, grokItem };
-    }
-
-    const items = getActionItems(actionBar);
-    const firstItem = items[0] || null;
-    return { template: firstItem, grokItem: null };
-  }
-
-  function createInlineIconSvg() {
-    const svgNs = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNs, "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("width", "1.25em");
-    svg.setAttribute("height", "1.25em");
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "2");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("aria-hidden", "true");
-
-    const ring = document.createElementNS(svgNs, "circle");
-    ring.setAttribute("cx", "12");
-    ring.setAttribute("cy", "12");
-    ring.setAttribute("r", "8");
-
-    const slash = document.createElementNS(svgNs, "path");
-    slash.setAttribute("d", "M8.5 15.5L15.5 8.5");
-
-    svg.appendChild(ring);
-    svg.appendChild(slash);
-    return svg;
-  }
-
-  function setupInlineButtonElement(button) {
-    if (!button) return;
-
-    button.setAttribute(INLINE_BUTTON_ATTR, "1");
-    button.setAttribute("aria-label", "ブロック");
-    button.title = extensionEnabled ? "このユーザーをブロック" : "機能がOFFです";
-    button.disabled = !extensionEnabled;
-    if (button.tagName === "BUTTON") button.type = "button";
-
-    button.removeAttribute("data-testid");
-
-    const newSvg = createInlineIconSvg();
-    const currentSvg = button.querySelector("svg");
-    if (currentSvg) {
-      currentSvg.replaceWith(newSvg);
-    } else {
-      button.textContent = "";
-      button.appendChild(newSvg);
-    }
-  }
-
   function updateInlineButtonsState() {
     const buttons = document.querySelectorAll(`button[${INLINE_BUTTON_ATTR}="1"]`);
     buttons.forEach((button) => {
@@ -364,26 +325,33 @@
     const actionBar = findActionBar(postEl);
     if (!actionBar) return;
 
-    const { template, grokItem } = findTemplateActionItem(actionBar);
-    if (!template) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute(INLINE_BUTTON_ATTR, "1");
+    button.textContent = "🚫";
+    button.title = extensionEnabled ? "このユーザーをブロック" : "機能がOFFです";
+    button.disabled = !extensionEnabled;
 
-    const inlineItem = template.cloneNode(true);
-    const targetButton = inlineItem.querySelector("button, [role='button']");
-    if (!targetButton || targetButton.tagName !== "BUTTON") return;
-
-    setupInlineButtonElement(targetButton);
-
-    targetButton.addEventListener("click", (event) => {
+    button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       void triggerBlockForPost(postEl, { source: "inline-button" });
     });
 
-    if (grokItem) {
-      actionBar.insertBefore(inlineItem, grokItem);
-    } else {
-      actionBar.appendChild(inlineItem);
+    const grokNode = findGrokAnchorNode(actionBar);
+    if (grokNode) {
+      const anchor = getDirectChild(actionBar, grokNode);
+      if (anchor && anchor.nextSibling) {
+        actionBar.insertBefore(button, anchor.nextSibling);
+        return;
+      }
+      if (anchor) {
+        actionBar.appendChild(button);
+        return;
+      }
     }
+
+    actionBar.appendChild(button);
   }
 
   function scanAndInjectInlineButtons(root) {
