@@ -5,16 +5,60 @@
   const STORAGE_KEY_ENABLED = "enabled";
   const STORAGE_KEY_REQUIRE_CONFIRM = "requireConfirm";
   const STORAGE_KEY_HISTORY = "executionHistory";
+  const STORAGE_KEY_TRIGGER_MODIFIER = "triggerModifier";
+  const STORAGE_KEY_TRIGGER_MOUSE_BUTTON = "triggerMouseButton";
   const MAX_HISTORY_ITEMS = 30;
+  const ALLOWED_MODIFIERS = ["meta", "ctrl", "alt", "shift", "none"];
+  const ALLOWED_MOUSE_BUTTONS = ["left", "middle", "right"];
 
   let extensionEnabled = true;
   let requireConfirm = true;
+  let triggerModifier = isMac ? "meta" : "ctrl";
+  let triggerMouseButton = "left";
   let isProcessing = false;
   let pendingConfirm = null;
   let toastRoot = null;
 
+  function normalizeModifier(value) {
+    return ALLOWED_MODIFIERS.includes(value) ? value : isMac ? "meta" : "ctrl";
+  }
+
+  function normalizeMouseButton(value) {
+    return ALLOWED_MOUSE_BUTTONS.includes(value) ? value : "left";
+  }
+
   function hasHotkey(event) {
-    return isMac ? event.metaKey : event.ctrlKey;
+    if (triggerModifier === "none") return true;
+    if (triggerModifier === "meta") return event.metaKey;
+    if (triggerModifier === "ctrl") return event.ctrlKey;
+    if (triggerModifier === "alt") return event.altKey;
+    if (triggerModifier === "shift") return event.shiftKey;
+    return false;
+  }
+
+  function matchesMouseButton(event) {
+    if (triggerMouseButton === "left") return event.button === 0;
+    if (triggerMouseButton === "middle") return event.button === 1;
+    if (triggerMouseButton === "right") return event.button === 2;
+    return false;
+  }
+
+  function getTriggerSummary() {
+    const modifierLabelMap = {
+      meta: isMac ? "Cmd" : "Meta",
+      ctrl: "Ctrl",
+      alt: "Alt",
+      shift: "Shift",
+      none: "修飾キーなし"
+    };
+
+    const mouseButtonLabelMap = {
+      left: "左クリック",
+      middle: "中クリック",
+      right: "右クリック"
+    };
+
+    return `${modifierLabelMap[triggerModifier]} + ${mouseButtonLabelMap[triggerMouseButton]}`;
   }
 
   function sleep(ms) {
@@ -185,7 +229,12 @@
   async function loadSettings() {
     if (!chrome?.storage?.local) return;
 
-    const data = await chrome.storage.local.get([STORAGE_KEY_ENABLED, STORAGE_KEY_REQUIRE_CONFIRM]);
+    const data = await chrome.storage.local.get([
+      STORAGE_KEY_ENABLED,
+      STORAGE_KEY_REQUIRE_CONFIRM,
+      STORAGE_KEY_TRIGGER_MODIFIER,
+      STORAGE_KEY_TRIGGER_MOUSE_BUTTON
+    ]);
 
     if (typeof data[STORAGE_KEY_ENABLED] === "boolean") {
       extensionEnabled = data[STORAGE_KEY_ENABLED];
@@ -199,6 +248,22 @@
     } else {
       requireConfirm = true;
       await chrome.storage.local.set({ [STORAGE_KEY_REQUIRE_CONFIRM]: true });
+    }
+
+    const normalizedModifier = normalizeModifier(data[STORAGE_KEY_TRIGGER_MODIFIER]);
+    const normalizedMouseButton = normalizeMouseButton(data[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]);
+    triggerModifier = normalizedModifier;
+    triggerMouseButton = normalizedMouseButton;
+
+    const needsPersistTrigger =
+      normalizedModifier !== data[STORAGE_KEY_TRIGGER_MODIFIER] ||
+      normalizedMouseButton !== data[STORAGE_KEY_TRIGGER_MOUSE_BUTTON];
+
+    if (needsPersistTrigger) {
+      await chrome.storage.local.set({
+        [STORAGE_KEY_TRIGGER_MODIFIER]: normalizedModifier,
+        [STORAGE_KEY_TRIGGER_MOUSE_BUTTON]: normalizedMouseButton
+      });
     }
   }
 
@@ -217,6 +282,19 @@
         requireConfirm = Boolean(changes[STORAGE_KEY_REQUIRE_CONFIRM].newValue);
         resetPendingConfirm();
         showToast(requireConfirm ? "二段階確認: ON" : "二段階確認: OFF", "info");
+      }
+
+      if (changes[STORAGE_KEY_TRIGGER_MODIFIER]) {
+        triggerModifier = normalizeModifier(changes[STORAGE_KEY_TRIGGER_MODIFIER].newValue);
+      }
+
+      if (changes[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]) {
+        triggerMouseButton = normalizeMouseButton(changes[STORAGE_KEY_TRIGGER_MOUSE_BUTTON].newValue);
+      }
+
+      if (changes[STORAGE_KEY_TRIGGER_MODIFIER] || changes[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]) {
+        resetPendingConfirm();
+        showToast(`トリガーを変更: ${getTriggerSummary()}`, "info");
       }
     });
   }
@@ -296,7 +374,7 @@
   document.addEventListener(
     "click",
     (event) => {
-      if (event.button !== 0 || !hasHotkey(event)) return;
+      if (!matchesMouseButton(event) || !hasHotkey(event)) return;
 
       const postEl = findPostElement(event.target);
       if (!postEl) return;

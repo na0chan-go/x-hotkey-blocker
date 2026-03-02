@@ -1,17 +1,46 @@
 const STORAGE_KEY_ENABLED = "enabled";
 const STORAGE_KEY_REQUIRE_CONFIRM = "requireConfirm";
 const STORAGE_KEY_HISTORY = "executionHistory";
+const STORAGE_KEY_TRIGGER_MODIFIER = "triggerModifier";
+const STORAGE_KEY_TRIGGER_MOUSE_BUTTON = "triggerMouseButton";
 const HISTORY_SHOW_COUNT = 10;
 
 const enabledToggleEl = document.getElementById("enabled-toggle");
 const confirmToggleEl = document.getElementById("confirm-toggle");
+const modifierSelectEl = document.getElementById("modifier-select");
+const mouseButtonSelectEl = document.getElementById("mouse-button-select");
 const statusEl = document.getElementById("status-text");
 const historyListEl = document.getElementById("history-list");
 
-function renderStatus(enabled, requireConfirm) {
+const allowedModifiers = ["meta", "ctrl", "alt", "shift", "none"];
+const allowedMouseButtons = ["left", "middle", "right"];
+
+function normalizeModifier(value) {
+  return allowedModifiers.includes(value) ? value : "ctrl";
+}
+
+function normalizeMouseButton(value) {
+  return allowedMouseButtons.includes(value) ? value : "left";
+}
+
+function modifierLabel(value) {
+  if (value === "meta") return "Cmd/Meta";
+  if (value === "ctrl") return "Ctrl";
+  if (value === "alt") return "Alt";
+  if (value === "shift") return "Shift";
+  return "なし";
+}
+
+function mouseButtonLabel(value) {
+  if (value === "left") return "左";
+  if (value === "middle") return "中";
+  return "右";
+}
+
+function renderStatus(enabled, requireConfirm, modifier, mouseButton) {
   const enabledText = enabled ? "ON" : "OFF";
   const confirmText = requireConfirm ? "ON" : "OFF";
-  statusEl.textContent = `現在: 機能 ${enabledText} / 二段階確認 ${confirmText}`;
+  statusEl.textContent = `現在: 機能 ${enabledText} / 二段階確認 ${confirmText} / トリガー ${modifierLabel(modifier)} + ${mouseButtonLabel(mouseButton)}クリック`;
 }
 
 function formatTime(ts) {
@@ -58,23 +87,53 @@ function renderHistory(items) {
   historyListEl.innerHTML = rows.join("");
 }
 
+function currentSettingsFromUI() {
+  return {
+    enabled: enabledToggleEl.checked,
+    requireConfirm: confirmToggleEl.checked,
+    modifier: normalizeModifier(modifierSelectEl.value),
+    mouseButton: normalizeMouseButton(mouseButtonSelectEl.value)
+  };
+}
+
+function renderAllStatusFromUI() {
+  const state = currentSettingsFromUI();
+  renderStatus(state.enabled, state.requireConfirm, state.modifier, state.mouseButton);
+}
+
 async function loadAll() {
-  const data = await chrome.storage.local.get([STORAGE_KEY_ENABLED, STORAGE_KEY_REQUIRE_CONFIRM, STORAGE_KEY_HISTORY]);
+  const data = await chrome.storage.local.get([
+    STORAGE_KEY_ENABLED,
+    STORAGE_KEY_REQUIRE_CONFIRM,
+    STORAGE_KEY_TRIGGER_MODIFIER,
+    STORAGE_KEY_TRIGGER_MOUSE_BUTTON,
+    STORAGE_KEY_HISTORY
+  ]);
 
   const enabled = typeof data[STORAGE_KEY_ENABLED] === "boolean" ? data[STORAGE_KEY_ENABLED] : true;
   const requireConfirm =
     typeof data[STORAGE_KEY_REQUIRE_CONFIRM] === "boolean" ? data[STORAGE_KEY_REQUIRE_CONFIRM] : true;
+  const modifier = normalizeModifier(data[STORAGE_KEY_TRIGGER_MODIFIER]);
+  const mouseButton = normalizeMouseButton(data[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]);
   const history = Array.isArray(data[STORAGE_KEY_HISTORY]) ? data[STORAGE_KEY_HISTORY] : [];
 
   enabledToggleEl.checked = enabled;
   confirmToggleEl.checked = requireConfirm;
-  renderStatus(enabled, requireConfirm);
+  modifierSelectEl.value = modifier;
+  mouseButtonSelectEl.value = mouseButton;
+  renderStatus(enabled, requireConfirm, modifier, mouseButton);
   renderHistory(history);
 
   const initialValues = {};
   if (typeof data[STORAGE_KEY_ENABLED] !== "boolean") initialValues[STORAGE_KEY_ENABLED] = true;
   if (typeof data[STORAGE_KEY_REQUIRE_CONFIRM] !== "boolean") {
     initialValues[STORAGE_KEY_REQUIRE_CONFIRM] = true;
+  }
+  if (modifier !== data[STORAGE_KEY_TRIGGER_MODIFIER]) {
+    initialValues[STORAGE_KEY_TRIGGER_MODIFIER] = modifier;
+  }
+  if (mouseButton !== data[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]) {
+    initialValues[STORAGE_KEY_TRIGGER_MOUSE_BUTTON] = mouseButton;
   }
   if (!Array.isArray(data[STORAGE_KEY_HISTORY])) {
     initialValues[STORAGE_KEY_HISTORY] = [];
@@ -88,14 +147,18 @@ function watchStorage() {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") return;
 
-    const enabled = changes[STORAGE_KEY_ENABLED] ? Boolean(changes[STORAGE_KEY_ENABLED].newValue) : enabledToggleEl.checked;
-    const requireConfirm = changes[STORAGE_KEY_REQUIRE_CONFIRM]
-      ? Boolean(changes[STORAGE_KEY_REQUIRE_CONFIRM].newValue)
-      : confirmToggleEl.checked;
+    if (changes[STORAGE_KEY_ENABLED]) enabledToggleEl.checked = Boolean(changes[STORAGE_KEY_ENABLED].newValue);
+    if (changes[STORAGE_KEY_REQUIRE_CONFIRM]) {
+      confirmToggleEl.checked = Boolean(changes[STORAGE_KEY_REQUIRE_CONFIRM].newValue);
+    }
+    if (changes[STORAGE_KEY_TRIGGER_MODIFIER]) {
+      modifierSelectEl.value = normalizeModifier(changes[STORAGE_KEY_TRIGGER_MODIFIER].newValue);
+    }
+    if (changes[STORAGE_KEY_TRIGGER_MOUSE_BUTTON]) {
+      mouseButtonSelectEl.value = normalizeMouseButton(changes[STORAGE_KEY_TRIGGER_MOUSE_BUTTON].newValue);
+    }
 
-    if (changes[STORAGE_KEY_ENABLED]) enabledToggleEl.checked = enabled;
-    if (changes[STORAGE_KEY_REQUIRE_CONFIRM]) confirmToggleEl.checked = requireConfirm;
-    renderStatus(enabled, requireConfirm);
+    renderAllStatusFromUI();
 
     if (changes[STORAGE_KEY_HISTORY]) {
       const history = Array.isArray(changes[STORAGE_KEY_HISTORY].newValue) ? changes[STORAGE_KEY_HISTORY].newValue : [];
@@ -105,17 +168,27 @@ function watchStorage() {
 }
 
 enabledToggleEl.addEventListener("change", async () => {
-  const enabled = enabledToggleEl.checked;
-  const requireConfirm = confirmToggleEl.checked;
-  await chrome.storage.local.set({ [STORAGE_KEY_ENABLED]: enabled });
-  renderStatus(enabled, requireConfirm);
+  await chrome.storage.local.set({ [STORAGE_KEY_ENABLED]: enabledToggleEl.checked });
+  renderAllStatusFromUI();
 });
 
 confirmToggleEl.addEventListener("change", async () => {
-  const enabled = enabledToggleEl.checked;
-  const requireConfirm = confirmToggleEl.checked;
-  await chrome.storage.local.set({ [STORAGE_KEY_REQUIRE_CONFIRM]: requireConfirm });
-  renderStatus(enabled, requireConfirm);
+  await chrome.storage.local.set({ [STORAGE_KEY_REQUIRE_CONFIRM]: confirmToggleEl.checked });
+  renderAllStatusFromUI();
+});
+
+modifierSelectEl.addEventListener("change", async () => {
+  const modifier = normalizeModifier(modifierSelectEl.value);
+  modifierSelectEl.value = modifier;
+  await chrome.storage.local.set({ [STORAGE_KEY_TRIGGER_MODIFIER]: modifier });
+  renderAllStatusFromUI();
+});
+
+mouseButtonSelectEl.addEventListener("change", async () => {
+  const mouseButton = normalizeMouseButton(mouseButtonSelectEl.value);
+  mouseButtonSelectEl.value = mouseButton;
+  await chrome.storage.local.set({ [STORAGE_KEY_TRIGGER_MOUSE_BUTTON]: mouseButton });
+  renderAllStatusFromUI();
 });
 
 void loadAll();

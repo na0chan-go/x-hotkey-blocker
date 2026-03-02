@@ -31,6 +31,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 10px;
         padding: 10px;
         border-radius: 10px;
         background: #ffffff;
@@ -100,6 +101,11 @@
         width: 18px;
         height: 18px;
       }
+      select {
+        min-width: 120px;
+        font-size: 12px;
+        padding: 4px 6px;
+      }
     </style>
   </head>
   <body>
@@ -114,9 +120,27 @@
           <span class="label">二段階確認を使う</span>
           <input id="confirm-toggle" type="checkbox" />
         </div>
+        <div class="row">
+          <span class="label">修飾キー</span>
+          <select id="modifier-select">
+            <option value="meta">Cmd / Meta</option>
+            <option value="ctrl">Ctrl</option>
+            <option value="alt">Alt</option>
+            <option value="shift">Shift</option>
+            <option value="none">なし</option>
+          </select>
+        </div>
+        <div class="row">
+          <span class="label">マウスボタン</span>
+          <select id="mouse-button-select">
+            <option value="left">左クリック</option>
+            <option value="middle">中クリック</option>
+            <option value="right">右クリック</option>
+          </select>
+        </div>
       </div>
       <p class="status" id="status-text">状態を確認中...</p>
-      <p class="hint">確認ON: 3秒以内の再クリックで実行 / 確認OFF: 1回で実行</p>
+      <p class="hint">任意の修飾キー + 任意のマウスボタンでトリガーを設定できます。</p>
 
       <section class="history">
         <h2 class="history-title">直近の実行履歴</h2>
