@@ -10,8 +10,6 @@
   const MAX_HISTORY_ITEMS = 30;
   const ALLOWED_MODIFIERS = ["meta", "ctrl", "alt", "shift", "none"];
   const ALLOWED_MOUSE_BUTTONS = ["left", "middle", "right"];
-  const INLINE_BUTTON_ATTR = "data-xhb-inline-button";
-  const INLINE_BUTTON_STYLE_ID = "xhb-inline-button-style";
 
   let extensionEnabled = true;
   let requireConfirm = true;
@@ -259,135 +257,6 @@
     return true;
   }
 
-  function ensureInlineButtonStyles() {
-    if (document.getElementById(INLINE_BUTTON_STYLE_ID)) return;
-
-    const style = document.createElement("style");
-    style.id = INLINE_BUTTON_STYLE_ID;
-    style.textContent = `
-      button[${INLINE_BUTTON_ATTR}="1"] {
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        background: rgba(0, 0, 0, 0.45);
-        color: #fff;
-        border-radius: 999px;
-        width: 26px;
-        height: 26px;
-        font-size: 14px;
-        line-height: 1;
-        cursor: pointer;
-      }
-      button[${INLINE_BUTTON_ATTR}="1"]:hover {
-        background: rgba(220, 38, 38, 0.85);
-      }
-      button[${INLINE_BUTTON_ATTR}="1"]:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  function findActionBar(postEl) {
-    const groups = Array.from(postEl.querySelectorAll('div[role="group"]'));
-    return groups.find((group) => group.querySelector("button, [role='button']")) || null;
-  }
-
-  function getDirectChild(parent, node) {
-    let current = node;
-    while (current && current.parentElement !== parent) {
-      current = current.parentElement;
-    }
-    return current && current.parentElement === parent ? current : null;
-  }
-
-  function findGrokAnchorNode(actionBar) {
-    const candidates = Array.from(actionBar.querySelectorAll("[data-testid], [aria-label]"));
-    return (
-      candidates.find((el) => {
-        const dt = (el.getAttribute("data-testid") || "").toLowerCase();
-        const al = (el.getAttribute("aria-label") || "").toLowerCase();
-        return dt.includes("grok") || al.includes("grok");
-      }) || null
-    );
-  }
-
-  function updateInlineButtonsState() {
-    const buttons = document.querySelectorAll(`button[${INLINE_BUTTON_ATTR}="1"]`);
-    buttons.forEach((button) => {
-      button.disabled = !extensionEnabled;
-      button.title = extensionEnabled ? "このユーザーをブロック" : "機能がOFFです";
-    });
-  }
-
-  function injectInlineButtonIntoPost(postEl) {
-    if (postEl.querySelector(`button[${INLINE_BUTTON_ATTR}="1"]`)) return;
-
-    const actionBar = findActionBar(postEl);
-    if (!actionBar) return;
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute(INLINE_BUTTON_ATTR, "1");
-    button.textContent = "🚫";
-    button.title = extensionEnabled ? "このユーザーをブロック" : "機能がOFFです";
-    button.disabled = !extensionEnabled;
-
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void triggerBlockForPost(postEl, { source: "inline-button" });
-    });
-
-    const grokNode = findGrokAnchorNode(actionBar);
-    if (grokNode) {
-      const anchor = getDirectChild(actionBar, grokNode);
-      if (anchor && anchor.nextSibling) {
-        actionBar.insertBefore(button, anchor.nextSibling);
-        return;
-      }
-      if (anchor) {
-        actionBar.appendChild(button);
-        return;
-      }
-    }
-
-    actionBar.appendChild(button);
-  }
-
-  function scanAndInjectInlineButtons(root) {
-    const base = root && root.querySelectorAll ? root : document;
-    const posts = base.querySelectorAll('article[data-testid="tweet"]');
-    posts.forEach((postEl) => injectInlineButtonIntoPost(postEl));
-  }
-
-  function setupInlineButtons() {
-    ensureInlineButtonStyles();
-    scanAndInjectInlineButtons(document);
-    updateInlineButtonsState();
-
-    if (!document.body) return;
-
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (!(node instanceof HTMLElement)) continue;
-
-          if (node.matches && node.matches('article[data-testid="tweet"]')) {
-            injectInlineButtonIntoPost(node);
-            continue;
-          }
-
-          if (node.querySelectorAll) {
-            scanAndInjectInlineButtons(node);
-          }
-        }
-      }
-      updateInlineButtonsState();
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
   async function loadSettings() {
     if (!chrome?.storage?.local) return;
 
@@ -427,8 +296,6 @@
         [STORAGE_KEY_TRIGGER_MOUSE_BUTTON]: normalizedMouseButton
       });
     }
-
-    updateInlineButtonsState();
   }
 
   function watchSettings() {
@@ -440,7 +307,6 @@
       if (changes[STORAGE_KEY_ENABLED]) {
         extensionEnabled = Boolean(changes[STORAGE_KEY_ENABLED].newValue);
         showToast(extensionEnabled ? "X Hotkey Blocker: ON" : "X Hotkey Blocker: OFF", "info");
-        updateInlineButtonsState();
       }
 
       if (changes[STORAGE_KEY_REQUIRE_CONFIRM]) {
@@ -533,46 +399,8 @@
     await chrome.storage.local.set({ [STORAGE_KEY_HISTORY]: next });
   }
 
-  async function triggerBlockForPost(postEl, options = {}) {
-    const source = options.source || "hotkey";
-
-    if (!extensionEnabled) {
-      showToast("機能がOFFです", "info");
-      return;
-    }
-
-    if (isProcessing) {
-      showToast("処理中です。少し待ってください", "info");
-      return;
-    }
-
-    if (source === "hotkey" && requireConfirm && needsSecondClick(postEl)) {
-      showToast("3秒以内に同じポストをもう一度クリックで実行", "warning");
-      return;
-    }
-
-    isProcessing = true;
-    try {
-      const result = await blockFromPost(postEl);
-      notifyResult(result.status);
-      await appendExecutionHistory(result.status, postEl);
-    } catch {
-      showToast("想定外エラーが発生しました", "error");
-      await appendExecutionHistory("unexpected-error", postEl);
-    } finally {
-      isProcessing = false;
-      resetPendingConfirm();
-    }
-  }
-
   void loadSettings();
   watchSettings();
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", setupInlineButtons, { once: true });
-  } else {
-    setupInlineButtons();
-  }
 
   document.addEventListener(
     "click",
@@ -582,10 +410,35 @@
       const postEl = findPostElement(event.target);
       if (!postEl) return;
 
+      if (!extensionEnabled) return;
+
       event.preventDefault();
       event.stopPropagation();
 
-      void triggerBlockForPost(postEl, { source: "hotkey" });
+      if (isProcessing) {
+        showToast("処理中です。少し待ってください", "info");
+        return;
+      }
+
+      if (requireConfirm && needsSecondClick(postEl)) {
+        showToast("3秒以内に同じポストをもう一度クリックで実行", "warning");
+        return;
+      }
+
+      isProcessing = true;
+      void blockFromPost(postEl)
+        .then((result) => {
+          notifyResult(result.status);
+          void appendExecutionHistory(result.status, postEl);
+        })
+        .catch(() => {
+          showToast("想定外エラーが発生しました", "error");
+          void appendExecutionHistory("unexpected-error", postEl);
+        })
+        .finally(() => {
+          isProcessing = false;
+          resetPendingConfirm();
+        });
     },
     true
   );
