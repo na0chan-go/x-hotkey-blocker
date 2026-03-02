@@ -349,6 +349,17 @@
     });
   }
 
+  function createHeaderInlineItem(container, baseButton) {
+    const baseItem = getDirectChild(container, baseButton);
+    if (!baseItem) return null;
+
+    const item = baseItem.cloneNode(false);
+    const button = baseButton.cloneNode(true);
+    setupInlineButtonElement(button);
+    item.appendChild(button);
+    return { item, button };
+  }
+
   function injectInlineButtonIntoPost(postEl) {
     if (postEl.querySelector(`button[${INLINE_BUTTON_ATTR}="1"]`)) return;
 
@@ -358,14 +369,13 @@
     const menuButton = findOpenMenuButton(postEl);
     if (!menuButton) return;
 
-    const menuItem = getDirectChild(container, menuButton);
-    if (!menuItem) return;
+    const grokButton = findGrokHeaderButton(container);
+    const baseButton = grokButton && grokButton.tagName === "BUTTON" ? grokButton : menuButton;
 
-    const inlineItem = menuItem.cloneNode(true);
-    const targetButton = inlineItem.querySelector("button, [role='button']");
-    if (!targetButton || targetButton.tagName !== "BUTTON") return;
+    const created = createHeaderInlineItem(container, baseButton);
+    if (!created) return;
 
-    setupInlineButtonElement(targetButton);
+    const { item: inlineItem, button: targetButton } = created;
 
     targetButton.addEventListener("click", (event) => {
       event.preventDefault();
@@ -373,15 +383,20 @@
       void triggerBlockForPost(postEl, { source: "inline-button" });
     });
 
-    const grokButton = findGrokHeaderButton(container);
     const grokItem = grokButton ? getDirectChild(container, grokButton) : null;
+    const menuItem = getDirectChild(container, menuButton);
 
     if (grokItem) {
       container.insertBefore(inlineItem, grokItem);
       return;
     }
 
-    container.insertBefore(inlineItem, menuItem);
+    if (menuItem) {
+      container.insertBefore(inlineItem, menuItem);
+      return;
+    }
+
+    container.appendChild(inlineItem);
   }
 
   function scanAndInjectInlineButtons(root) {
