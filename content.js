@@ -261,9 +261,18 @@
 
   function ensureInlineButtonStyles() {}
 
-  function findActionBar(postEl) {
-    const groups = Array.from(postEl.querySelectorAll('div[role="group"]'));
-    return groups.find((group) => group.querySelector("button, [role='button']")) || null;
+  function findHeaderActionContainer(postEl) {
+    const menuButton = findOpenMenuButton(postEl);
+    if (!menuButton) return null;
+
+    const group = menuButton.closest('div[role="group"]');
+    if (group) return group;
+
+    const parent = menuButton.parentElement;
+    const grandParent = parent ? parent.parentElement : null;
+    if (grandParent && grandParent.querySelector("button")) return grandParent;
+    if (parent && parent.querySelector("button")) return parent;
+    return null;
   }
 
   function getDirectChild(parent, node) {
@@ -274,33 +283,15 @@
     return current && current.parentElement === parent ? current : null;
   }
 
-  function findGrokAnchorNode(actionBar) {
-    const candidates = Array.from(actionBar.querySelectorAll("[data-testid], [aria-label]"));
+  function findGrokHeaderButton(container) {
+    const candidates = Array.from(container.querySelectorAll("button[aria-label], [role='button'][aria-label], [data-testid]"));
     return (
       candidates.find((el) => {
+        const aria = (el.getAttribute("aria-label") || "").toLowerCase();
         const dt = (el.getAttribute("data-testid") || "").toLowerCase();
-        const al = (el.getAttribute("aria-label") || "").toLowerCase();
-        return dt.includes("grok") || al.includes("grok");
+        return aria.includes("grok") || aria.includes("explain") || aria.includes("説明") || dt.includes("grok");
       }) || null
     );
-  }
-
-  function getActionItems(actionBar) {
-    return Array.from(actionBar.children).filter((child) =>
-      child.querySelector(`button:not([${INLINE_BUTTON_ATTR}="1"]), [role="button"]:not([${INLINE_BUTTON_ATTR}="1"])`)
-    );
-  }
-
-  function findTemplateActionItem(actionBar) {
-    const grokNode = findGrokAnchorNode(actionBar);
-    if (grokNode) {
-      const grokItem = getDirectChild(actionBar, grokNode);
-      if (grokItem) return { template: grokItem, grokItem };
-    }
-
-    const items = getActionItems(actionBar);
-    const firstItem = items[0] || null;
-    return { template: firstItem, grokItem: null };
   }
 
   function createInlineIconSvg() {
@@ -361,13 +352,16 @@
   function injectInlineButtonIntoPost(postEl) {
     if (postEl.querySelector(`button[${INLINE_BUTTON_ATTR}="1"]`)) return;
 
-    const actionBar = findActionBar(postEl);
-    if (!actionBar) return;
+    const container = findHeaderActionContainer(postEl);
+    if (!container) return;
 
-    const { template, grokItem } = findTemplateActionItem(actionBar);
-    if (!template) return;
+    const menuButton = findOpenMenuButton(postEl);
+    if (!menuButton) return;
 
-    const inlineItem = template.cloneNode(true);
+    const menuItem = getDirectChild(container, menuButton);
+    if (!menuItem) return;
+
+    const inlineItem = menuItem.cloneNode(true);
     const targetButton = inlineItem.querySelector("button, [role='button']");
     if (!targetButton || targetButton.tagName !== "BUTTON") return;
 
@@ -379,11 +373,15 @@
       void triggerBlockForPost(postEl, { source: "inline-button" });
     });
 
+    const grokButton = findGrokHeaderButton(container);
+    const grokItem = grokButton ? getDirectChild(container, grokButton) : null;
+
     if (grokItem) {
-      actionBar.insertBefore(inlineItem, grokItem);
-    } else {
-      actionBar.appendChild(inlineItem);
+      container.insertBefore(inlineItem, grokItem);
+      return;
     }
+
+    container.insertBefore(inlineItem, menuItem);
   }
 
   function scanAndInjectInlineButtons(root) {
